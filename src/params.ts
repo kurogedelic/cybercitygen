@@ -19,9 +19,9 @@ export interface Params {
   windowGlow: number;
   signGlow: number;
   backdropGlow: number;
-  // 交通
-  trafficSpeed: number;
-  trafficGlow: number;
+  // ダンスフロア
+  floorGlow: number;
+  floorPulse: number;
   // 街の生成（変更で再生成）
   seed: number;
   density: number;
@@ -30,8 +30,8 @@ export interface Params {
 }
 
 export const DEFAULT_PARAMS: Params = {
-  camSpeed: 2.0,
-  camHeight: 2.6,
+  camSpeed: 0,
+  camHeight: 3.2,
   camSway: 1.6,
   fov: 55,
   exposure: 0.58,
@@ -43,8 +43,8 @@ export const DEFAULT_PARAMS: Params = {
   windowGlow: 0.75,
   signGlow: 0.4,
   backdropGlow: 0.2,
-  trafficSpeed: 1.0,
-  trafficGlow: 0.4,
+  floorGlow: 1.0,
+  floorPulse: 1.0,
   seed: 1,
   density: 1.0,
   heightScale: 1.0,
@@ -77,8 +77,8 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'signGlow', label: 'Sign Glow', min: 0, max: 3, step: 0.05, group: 'Look' },
   { key: 'backdropGlow', label: 'Distant Glow', min: 0, max: 1, step: 0.01, group: 'Look' },
 
-  { key: 'trafficSpeed', label: 'Speed', min: 0, max: 3, step: 0.05, group: 'Traffic' },
-  { key: 'trafficGlow', label: 'Glow', min: 0, max: 3, step: 0.05, group: 'Traffic' },
+  { key: 'floorGlow', label: 'Glow', min: 0, max: 3, step: 0.05, group: 'Floor' },
+  { key: 'floorPulse', label: 'Pulse', min: 0, max: 4, step: 0.05, group: 'Floor' },
 
   { key: 'seed', label: 'Seed', min: 0, max: 999, step: 1, group: 'City', regen: true },
   { key: 'density', label: 'Density', min: 0.5, max: 2, step: 0.05, group: 'City', regen: true },
