@@ -111,7 +111,7 @@ export class CityScene {
   // ダンスフロア
   private floorMesh!: THREE.Mesh;
   private floorCtx: Ctx2D;
-  private floorTex: THREE.CanvasTexture;
+  private floorTex: THREE.CanvasTexture<HTMLCanvasElement | OffscreenCanvas>;
   private floorTiles: FloorTile[] = [];
 
   readonly params: Params;
