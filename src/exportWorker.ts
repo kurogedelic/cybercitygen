@@ -5,6 +5,7 @@
  */
 import { CityScene } from './scene';
 import { exportMp4 } from './exporter';
+import { loadSceneFonts } from './fonts';
 import type { Params } from './params';
 
 interface WorkerRequest {
@@ -23,6 +24,7 @@ self.addEventListener('message', async (e: MessageEvent<WorkerRequest>) => {
   const { width, height, fps, durationSec, bitrateMbps, params } = e.data;
   let scene: CityScene | null = null;
   try {
+    await loadSceneFonts();
     const canvas = new OffscreenCanvas(width, height);
     scene = new CityScene(canvas, params);
     const blob = await exportMp4(scene, {

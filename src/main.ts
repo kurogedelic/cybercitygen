@@ -1,5 +1,6 @@
 import { CityScene } from './scene';
 import { exportMp4, exportMp4InWorker } from './exporter';
+import { loadSceneFonts } from './fonts';
 import { DEFAULT_PARAMS, PARAM_DEFS, type Params } from './params';
 
 const params: Params = { ...DEFAULT_PARAMS };
@@ -9,6 +10,10 @@ const previewArea = document.getElementById('preview')!;
 const compWrap = document.getElementById('comp-wrap')!;
 const compInfo = document.getElementById('comp-info')!;
 const status = document.getElementById('status')!;
+
+status.textContent = 'loading fonts';
+await loadSceneFonts();
+status.textContent = 'ready';
 
 const scene = new CityScene(canvas, params);
 

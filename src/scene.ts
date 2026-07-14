@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { SIGN_FONT_FAMILY } from './fonts';
 import type { Params } from './params';
 
 /**
@@ -442,7 +443,7 @@ export class CityScene {
     ctx.shadowColor = colorHex;
     ctx.shadowBlur = 24;
     ctx.strokeRect(18, 18, 476, 220);
-    ctx.font = `bold ${word.length > 5 ? 88 : 120}px "Hiragino Sans", sans-serif`;
+    ctx.font = `700 ${word.length > 5 ? 72 : 96}px "${SIGN_FONT_FAMILY}", "Hiragino Sans", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff';
@@ -561,7 +562,7 @@ export class CityScene {
     ctx.strokeRect(panelX + 8, panelY + 8, panelW - 16, panelH - 16);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = 'bold 118px "Hiragino Sans", sans-serif';
+    ctx.font = `700 104px "${SIGN_FONT_FAMILY}", "Hiragino Sans", sans-serif`;
     ctx.fillStyle = '#ff4cd2';
     ctx.fillText('CORIS', panelX + panelW / 2, panelY + panelH / 2);
 
