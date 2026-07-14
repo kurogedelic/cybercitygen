@@ -55,10 +55,19 @@
       position: relative;
       overflow: hidden;
     }
-    #preview canvas {
-      display: block;
+    #comp-wrap {
+      position: relative;
       box-shadow: 0 0 0 1px #000, 0 8px 40px #000a;
       background: #000;
+    }
+    #comp-wrap canvas { display: block; width: 100%; height: 100%; }
+    #comp-wrap #overlay-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: none;
     }
     #preview .comp-info {
       position: absolute;
@@ -67,6 +76,22 @@
       color: var(--text-dim);
       pointer-events: none;
     }
+
+    /* トグルスイッチ */
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .toggle-row label { color: var(--text-dim); }
+    .switch { position: relative; width: 34px; height: 18px; flex: none; }
+    .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+    .switch .track {
+      position: absolute; inset: 0; background: #3a3a46; border-radius: 9px;
+      transition: background 0.15s; pointer-events: none;
+    }
+    .switch .track::after {
+      content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+      background: #c9c9d4; border-radius: 50%; transition: transform 0.15s;
+    }
+    .switch input:checked ~ .track { background: var(--accent2); }
+    .switch input:checked ~ .track::after { transform: translateX(16px); background: #fff; }
 
     /* パラメータドック */
     #dock {
@@ -180,11 +205,31 @@
     </header>
     <div id="main">
       <div id="preview">
-        <canvas id="view"></canvas>
+        <div id="comp-wrap">
+          <canvas id="view"></canvas>
+          <img id="overlay-img" src="/overlay.png" alt="" />
+        </div>
         <div class="comp-info" id="comp-info"></div>
       </div>
       <aside id="dock">
         <div id="param-groups"></div>
+        <details class="group" open>
+          <summary>Overlay</summary>
+          <div class="group-body">
+            <div class="toggle-row">
+              <label for="overlay-enable">Enabled</label>
+              <span class="switch">
+                <input type="checkbox" id="overlay-enable" />
+                <span class="track"></span>
+              </span>
+            </div>
+            <div class="fader">
+              <label>Opacity</label>
+              <input type="range" id="overlay-opacity" min="0" max="1" step="0.01" value="0.5" />
+              <input type="number" id="overlay-opacity-num" min="0" max="1" step="0.01" value="0.5" />
+            </div>
+          </div>
+        </details>
         <details class="group" open>
           <summary>Export</summary>
           <div class="group-body">

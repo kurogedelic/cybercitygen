@@ -4,6 +4,9 @@
  * regen: true のものは変更時に街を再生成する。
  */
 export interface Params {
+  // リズム（フロア・看板の明滅テンポと反応の深さ）
+  bpm: number;
+  beatDepth: number;
   // カメラ
   camSpeed: number;
   camHeight: number;
@@ -22,6 +25,7 @@ export interface Params {
   // ダンスフロア
   floorGlow: number;
   floorPulse: number;
+  stageDepth: number;
   // 街の生成（変更で再生成）
   seed: number;
   density: number;
@@ -30,24 +34,27 @@ export interface Params {
 }
 
 export const DEFAULT_PARAMS: Params = {
+  bpm: 120,
+  beatDepth: 1.0,
   camSpeed: 0,
   camHeight: 3.2,
   camSway: 1.6,
   fov: 55,
-  exposure: 0.58,
+  exposure: 1.19,
   bloomStrength: 0.13,
-  bloomRadius: 0.86,
-  bloomThreshold: 0.13,
-  fogDensity: 0,
+  bloomRadius: 0.37,
+  bloomThreshold: 0.01,
+  fogDensity: 0.014,
   reflection: 0.15,
   windowGlow: 0.75,
   signGlow: 0.4,
-  backdropGlow: 0.2,
+  backdropGlow: 0.35,
   floorGlow: 1.0,
   floorPulse: 1.0,
+  stageDepth: 16,
   seed: 1,
-  density: 1.0,
-  heightScale: 1.0,
+  density: 1.4,
+  heightScale: 0.6,
   signDensity: 0.55,
 };
 
@@ -62,6 +69,9 @@ export interface ParamDef {
 }
 
 export const PARAM_DEFS: ParamDef[] = [
+  { key: 'bpm', label: 'BPM', min: 40, max: 200, step: 1, group: 'Rhythm' },
+  { key: 'beatDepth', label: 'Intensity', min: 0, max: 1, step: 0.01, group: 'Rhythm' },
+
   { key: 'camSpeed', label: 'Speed', min: 0, max: 8, step: 0.1, group: 'Camera' },
   { key: 'camHeight', label: 'Height', min: 0.5, max: 25, step: 0.1, group: 'Camera' },
   { key: 'camSway', label: 'Sway', min: 0, max: 5, step: 0.1, group: 'Camera' },
@@ -79,9 +89,10 @@ export const PARAM_DEFS: ParamDef[] = [
 
   { key: 'floorGlow', label: 'Glow', min: 0, max: 3, step: 0.05, group: 'Floor' },
   { key: 'floorPulse', label: 'Pulse', min: 0, max: 4, step: 0.05, group: 'Floor' },
+  { key: 'stageDepth', label: 'Depth', min: 8, max: 36, step: 0.5, group: 'Floor' },
 
   { key: 'seed', label: 'Seed', min: 0, max: 999, step: 1, group: 'City', regen: true },
-  { key: 'density', label: 'Density', min: 0.5, max: 2, step: 0.05, group: 'City', regen: true },
+  { key: 'density', label: 'Density', min: 0.5, max: 3, step: 0.05, group: 'City', regen: true },
   { key: 'heightScale', label: 'Height Scale', min: 0.5, max: 2, step: 0.05, group: 'City', regen: true },
   { key: 'signDensity', label: 'Sign Density', min: 0, max: 1, step: 0.05, group: 'City', regen: true },
 ];

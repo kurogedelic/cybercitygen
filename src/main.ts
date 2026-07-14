@@ -1,11 +1,12 @@
 import { CityScene } from './scene';
-import { exportMp4 } from './exporter';
+import { exportMp4, exportMp4InWorker } from './exporter';
 import { DEFAULT_PARAMS, PARAM_DEFS, type Params } from './params';
 
 const params: Params = { ...DEFAULT_PARAMS };
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const previewArea = document.getElementById('preview')!;
+const compWrap = document.getElementById('comp-wrap')!;
 const compInfo = document.getElementById('comp-info')!;
 const status = document.getElementById('status')!;
 
@@ -114,12 +115,34 @@ function makeExportFader(key: keyof typeof exportSettings, label: string, min: n
 makeExportFader('duration', 'Duration (s)', 1, 120, 1);
 makeExportFader('bitrate', 'Bitrate (Mbps)', 1, 100, 1);
 
+// ---- オーバーレイ（overlay.png を透明度付きでプレビューに重ねる） ----
+
+const overlayImg = document.getElementById('overlay-img') as HTMLImageElement;
+const overlayEnable = document.getElementById('overlay-enable') as HTMLInputElement;
+const overlayOpacity = document.getElementById('overlay-opacity') as HTMLInputElement;
+const overlayOpacityNum = document.getElementById('overlay-opacity-num') as HTMLInputElement;
+
+overlayImg.style.opacity = overlayOpacity.value;
+overlayEnable.addEventListener('change', () => {
+  overlayImg.style.display = overlayEnable.checked ? 'block' : 'none';
+});
+const applyOverlayOpacity = (v: number) => {
+  if (Number.isNaN(v)) return;
+  const clamped = Math.min(1, Math.max(0, v));
+  overlayImg.style.opacity = String(clamped);
+  overlayOpacity.value = String(clamped);
+  overlayOpacityNum.value = String(clamped);
+};
+overlayOpacity.addEventListener('input', () => applyOverlayOpacity(Number(overlayOpacity.value)));
+overlayOpacityNum.addEventListener('change', () => applyOverlayOpacity(Number(overlayOpacityNum.value)));
+
 // ---- プレビュー: コンポジションを枠内にレターボックスフィット ----
 
 const resolutionSel = document.getElementById('resolution') as HTMLSelectElement;
 const fpsSel = document.getElementById('fps') as HTMLSelectElement;
 
-let exporting = false;
+let exporting = false; // 書き出し中（ボタン二度押し防止）
+let mainThreadExport = false; // フォールバック時のみプレビューを止める
 
 function compSize(): [number, number] {
   const [w, h] = resolutionSel.value.split('x').map(Number);
@@ -127,7 +150,7 @@ function compSize(): [number, number] {
 }
 
 function fitPreview() {
-  if (exporting) return;
+  if (mainThreadExport) return;
   const [cw, ch] = compSize();
   const pad = 24;
   const availW = previewArea.clientWidth - pad * 2;
@@ -135,8 +158,8 @@ function fitPreview() {
   const scale = Math.min(availW / cw, availH / ch, 1);
   const dispW = Math.max(1, Math.floor(cw * scale));
   const dispH = Math.max(1, Math.floor(ch * scale));
-  canvas.style.width = `${dispW}px`;
-  canvas.style.height = `${dispH}px`;
+  compWrap.style.width = `${dispW}px`;
+  compWrap.style.height = `${dispH}px`;
   // 描画解像度は表示サイズ×DPR（フルコンポ解像度はエクスポート時のみ）
   const dpr = Math.min(window.devicePixelRatio, 2);
   scene.setSize(Math.floor(dispW * dpr), Math.floor(dispH * dpr));
@@ -152,7 +175,7 @@ fitPreview();
 const startTime = performance.now();
 function tick() {
   requestAnimationFrame(tick);
-  if (exporting) return;
+  if (mainThreadExport) return; // Worker書き出し中はプレビューを動かし続ける
   scene.update((performance.now() - startTime) / 1000);
   scene.render();
 }
@@ -172,19 +195,39 @@ exportBtn.addEventListener('click', async () => {
 
   const [w, h] = compSize();
   const fps = Number(fpsSel.value);
+  const onProgress = (done: number, total: number) => {
+    progressBar.style.width = `${(done / total) * 100}%`;
+    status.textContent = `rendering ${done}/${total} frames`;
+  };
 
   try {
-    const blob = await exportMp4(scene, {
-      width: w,
-      height: h,
-      fps,
-      durationSec: exportSettings.duration,
-      bitrateMbps: exportSettings.bitrate,
-      onProgress: (done, total) => {
-        progressBar.style.width = `${(done / total) * 100}%`;
-        status.textContent = `rendering ${done}/${total} frames`;
-      },
-    });
+    let blob: Blob;
+    try {
+      // Worker + OffscreenCanvas: プレビューを止めずにバックグラウンドで書き出す
+      blob = await exportMp4InWorker(
+        {
+          width: w,
+          height: h,
+          fps,
+          durationSec: exportSettings.duration,
+          bitrateMbps: exportSettings.bitrate,
+          params: { ...params },
+        },
+        onProgress,
+      );
+    } catch (workerErr) {
+      // OffscreenCanvas非対応などの場合はメインスレッドで従来どおり書き出す
+      console.warn('Worker書き出しに失敗、メインスレッドにフォールバック:', workerErr);
+      mainThreadExport = true;
+      blob = await exportMp4(scene, {
+        width: w,
+        height: h,
+        fps,
+        durationSec: exportSettings.duration,
+        bitrateMbps: exportSettings.bitrate,
+        onProgress,
+      });
+    }
 
     (window as unknown as { __lastExport?: Blob }).__lastExport = blob;
     const url = URL.createObjectURL(blob);
@@ -199,6 +242,7 @@ exportBtn.addEventListener('click', async () => {
     console.error(e);
   } finally {
     exporting = false;
+    mainThreadExport = false;
     exportBtn.disabled = false;
     progressBar.style.width = '0%';
     progressBox.classList.remove('active');

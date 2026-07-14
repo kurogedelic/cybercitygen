@@ -30,18 +30,44 @@ function hash01(n: number) {
   return s - Math.floor(s);
 }
 
+/**
+ * 4拍子のビートグリッド: period拍ごと・slot拍目にフラッシュし、1拍かけて減衰する。
+ * 全要素がこのグリッドに乗るので、テンポが「小節」として感じられる。
+ */
+function beatHit(beat: number, slot: number, period: number) {
+  const f = (((beat - slot) % period) + period) % period;
+  return f < 1 ? (1 - f) * (1 - f) : 0;
+}
+
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+// メインスレッド（HTMLCanvasElement）とWorker（OffscreenCanvas）の両方で動くcanvas生成
+function create2DCanvas(width: number, height: number): { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: Ctx2D } {
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return { canvas, ctx: canvas.getContext('2d')! };
+  }
+  const canvas = new OffscreenCanvas(width, height);
+  return { canvas, ctx: canvas.getContext('2d') as OffscreenCanvasRenderingContext2D };
+}
+
 type FacadeStyle = 'office' | 'residential' | 'glass' | 'dark';
 
 const NEON_PALETTE = ['#ff4cd2', '#b44cff', '#4cc9ff', '#4c6bff', '#ffb84c', '#ff6b9d', '#7dffd4'];
 const SIGN_WORDS = ['CORIS', 'DANCE', 'GUM', 'GUMGUM', 'COMECOME', 'FUEGUM'];
 const FLOOR_ICONS = ['♪', '★', '♥', '◆'];
 
-const CITY_LENGTH = 320; // 街の奥行き
-const STREET_HALF = 9; // 広場の半幅（ビルはこの外側）
+const CITY_LENGTH = 420; // 街の奥行き
+const STREET_HALF = 10; // 広場の半幅（ビルはこの外側）
+const CAMERA_BASE_Z = 34; // カメラの基準z（大きいほど手前に下がりステージが広く見える）
+const CITY_START_Z = -12; // ビル群の手前端（ステージ広場との間に間合いを作り、都市を奥に離す）
+const CAP_START_Z = -70; // これより奥は中央（通りの真ん中）にも建物を置き、道が突き抜けて見えないようにする
 
 // ダンスフロアのグリッド
 const FLOOR_COLS = 9;
-const FLOOR_ROWS = 12;
+const FLOOR_ROWS = 6; // ステージの奥行きを半分に（タイルが正方形を保つよう幅列数の半分に設定）
 const FLOOR_CELL = 84; // px
 const FLOOR_W = FLOOR_COLS * FLOOR_CELL;
 const FLOOR_H = FLOOR_ROWS * FLOOR_CELL;
@@ -49,7 +75,7 @@ const FLOOR_H = FLOOR_ROWS * FLOOR_CELL;
 interface Sign {
   material: THREE.MeshBasicMaterial;
   baseColor: THREE.Color;
-  phase: number;
+  phase: number; // フリッカーゲート用の乱数
   flickery: boolean;
 }
 
@@ -62,8 +88,6 @@ interface FloorTile {
   col: number;
   row: number;
   colorIdx: number;
-  phase: number;
-  speed: number;
   icon: string | null;
 }
 
@@ -85,25 +109,26 @@ export class CityScene {
   private disposables: { dispose(): void }[] = [];
 
   // ダンスフロア
-  private floorCtx: CanvasRenderingContext2D;
+  private floorMesh!: THREE.Mesh;
+  private floorCtx: Ctx2D;
   private floorTex: THREE.CanvasTexture;
   private floorTiles: FloorTile[] = [];
 
   readonly params: Params;
 
-  constructor(canvas: HTMLCanvasElement, params: Params) {
+  constructor(canvas: HTMLCanvasElement | OffscreenCanvas, params: Params) {
     this.params = params;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x060612);
-    this.scene.fog = new THREE.FogExp2(0x0a0a24, params.fogDensity);
+    this.scene.background = new THREE.Color(0x050c2e);
+    this.scene.fog = new THREE.FogExp2(0x142868, params.fogDensity);
 
     this.camera = new THREE.PerspectiveCamera(55, 16 / 9, 0.1, 400);
 
     this.scene.add(this.city, this.mirror);
-    this.scene.add(new THREE.AmbientLight(0x223, 1.2));
+    this.scene.add(new THREE.AmbientLight(0x1c2a66, 1.4));
 
     // 地面: 反射コピーが透けて見える半透明の黒
     this.groundMat = new THREE.MeshBasicMaterial({ color: 0x04040a, transparent: true, opacity: 0.85 });
@@ -115,17 +140,17 @@ export class CityScene {
     this.disposables.push(ground.geometry, this.groundMat);
 
     // ダンスフロア: 手前の広場。毎フレーム canvas を描き直してパルスさせる
-    const floorCanvas = document.createElement('canvas');
-    floorCanvas.width = FLOOR_W;
-    floorCanvas.height = FLOOR_H;
-    this.floorCtx = floorCanvas.getContext('2d')!;
+    const { canvas: floorCanvas, ctx: floorCtx } = create2DCanvas(FLOOR_W, FLOOR_H);
+    this.floorCtx = floorCtx;
     this.floorTex = new THREE.CanvasTexture(floorCanvas);
     this.floorTex.colorSpace = THREE.SRGBColorSpace;
     const floorMat = new THREE.MeshBasicMaterial({ map: this.floorTex, toneMapped: false });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(22, 30), floorMat);
+    // 奥行きは stageDepth パラメータで可変（手前端 z=28 固定、update() でスケール反映）
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(24, 16), floorMat);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(0, 0.02, 6); // z: 21 〜 -9
+    floor.position.set(0, 0.02, 20);
     floor.renderOrder = 2;
+    this.floorMesh = floor;
     this.scene.add(floor);
     this.disposables.push(floor.geometry, floorMat, this.floorTex);
 
@@ -215,14 +240,15 @@ export class CityScene {
     };
 
     const { density, heightScale } = this.params;
-    for (let z = 18; z > -CITY_LENGTH; z -= (7 + rng() * 4) / density) {
-      if (rng() < 0.12) continue; // 交差点の抜け
+    for (let z = CITY_START_Z; z > -CITY_LENGTH; z -= (6 + rng() * 3.5) / density) {
+      if (rng() < 0.1) continue; // 交差点の抜け
       for (const side of [-1, 1]) {
-        // 手前の列 + 奥の列（奥ほど高い）
-        for (let row = 0; row < 2; row++) {
-          const h = (row === 0 ? 8 + rng() * 22 : 20 + rng() * 45) * heightScale;
-          const w = 4 + rng() * 5;
-          const d = 4 + rng() * 5;
+        // 手前の列 + 中間の列 + 奥の遠景スカイライン（横方向に何層も並べて隙間を埋める）
+        for (let row = 0; row < 5; row++) {
+          const h =
+            (row === 0 ? 4 + rng() * 11 : row === 1 ? 20 + rng() * 45 : 45 + rng() * 95) * heightScale;
+          const w = row < 2 ? 4 + rng() * 5 : 3 + rng() * 4;
+          const d = row < 2 ? 4 + rng() * 5 : 3 + rng() * 4;
           const x = side * (STREET_HALF + w / 2 + row * (7 + rng() * 5) + rng() * 2);
           const cz = z - d / 2;
           const style = this.pickStyle(rng);
@@ -230,6 +256,21 @@ export class CityScene {
           const base = makeBlock(w, h, d, style, row === 0 && rng() < 0.6);
           base.position.set(x, h / 2, cz);
           this.city.add(base);
+
+          if (row >= 2) {
+            // 遠景の簡易スカイライン: 描画コストを抑え、まれにクラウン照明のみ
+            if (h > 90 && rng() < 0.3) {
+              const color = new THREE.Color(NEON_PALETTE[Math.floor(rng() * NEON_PALETTE.length)]);
+              const crown = new THREE.Mesh(
+                boxGeo,
+                new THREE.MeshBasicMaterial({ color: color.multiplyScalar(1.1), toneMapped: false }),
+              );
+              crown.scale.set(w + 0.15, 0.12, d + 0.15);
+              crown.position.set(x, h + 0.06, cz);
+              this.city.add(crown);
+            }
+            continue;
+          }
 
           // セットバック（段状の塔屋）
           let topY = h;
@@ -311,6 +352,32 @@ export class CityScene {
           }
         }
       }
+
+      // 中央（通りの奥）にも建物を: 遠方まで正面が抜けた道に見えないよう埋める
+      if (z < CAP_START_Z) {
+        const n = 1 + Math.floor(rng() * 2);
+        for (let i = 0; i < n; i++) {
+          const cw = 3 + rng() * 4.5;
+          const cd = 3 + rng() * 4.5;
+          const ch = (40 + rng() * 100) * heightScale;
+          const cx = (rng() - 0.5) * STREET_HALF * 1.7;
+          const ccz = z - cd / 2 - rng() * 6;
+          const style = this.pickStyle(rng);
+          const cap = makeBlock(cw, ch, cd, style, false);
+          cap.position.set(cx, ch / 2, ccz);
+          this.city.add(cap);
+          if (ch > 85 && rng() < 0.3) {
+            const color = new THREE.Color(NEON_PALETTE[Math.floor(rng() * NEON_PALETTE.length)]);
+            const crown = new THREE.Mesh(
+              boxGeo,
+              new THREE.MeshBasicMaterial({ color: color.multiplyScalar(1.1), toneMapped: false }),
+            );
+            crown.scale.set(cw + 0.15, 0.12, cd + 0.15);
+            crown.position.set(cx, ch + 0.06, ccz);
+            this.city.add(crown);
+          }
+        }
+      }
     }
   }
 
@@ -326,19 +393,37 @@ export class CityScene {
 
   private buildSigns(rng: () => number) {
     // 参考構図のヒーロー看板（必ず出る・広場の上空でビルに隠れない位置）
-    this.addSign('CORIS', '#ff4cd2', -4.8, 12, -14, 8, false, rng);
-    this.addSign('DANCE', '#b44cff', 5.2, 11, -24, 7, false, rng);
+    this.addSign('CORIS', '#ff4cd2', -4.8, 12, -20, 8, false, rng);
+    this.addSign('DANCE', '#b44cff', 5.2, 11, -30, 7, false, rng);
 
-    // 街路の壁面ぎわに吊るす看板（ビルに隠れないよう |x| < STREET_HALF）
-    const n = Math.round(this.params.signDensity * 30);
-    for (let i = 0; i < n; i++) {
+    // カメラから見える3つの帯に配置して画面全体に散らす:
+    // 低層帯 = ステージ際の手前ビル正面 / 中層帯 = 手前ビル屋上より上・2列目タワーの正面 / 奥 = 通りの上空
+    const target = Math.round(this.params.signDensity * 30);
+    for (let i = 0; i < target; i++) {
       const word = SIGN_WORDS[Math.floor(rng() * SIGN_WORDS.length)];
       const color = NEON_PALETTE[Math.floor(rng() * NEON_PALETTE.length)];
       const side = rng() < 0.5 ? -1 : 1;
-      const s = 3 + rng() * 4;
-      const x = side * (STREET_HALF - 0.3 - rng() * 1.5 - s / 4);
-      const y = 5 + rng() * 25;
-      const z = -8 - rng() * 160;
+      const r = rng();
+      let x: number, y: number, z: number, s: number;
+      if (r < 0.4) {
+        // 低層帯（画面の左右下寄り）
+        s = 2 + rng() * 2.5;
+        x = side * (9.6 + rng() * 1.6);
+        y = 2.2 + rng() * 5;
+        z = -5 - rng() * 40;
+      } else if (r < 0.8) {
+        // 中層帯（画面の左右上寄り、手前ビルの屋上より上なので隠れない）
+        s = 3 + rng() * 3.5;
+        x = side * (12.5 + rng() * 6);
+        y = 10 + rng() * 15;
+        z = -8 - rng() * 55;
+      } else {
+        // 奥（消失点まわりの深度感）
+        s = 3 + rng() * 4;
+        x = side * (9 + rng() * 5);
+        y = 8 + rng() * 20;
+        z = -60 - rng() * 100;
+      }
       this.addSign(word, color, x, y, z, s, rng() < 0.3, rng);
     }
   }
@@ -349,10 +434,7 @@ export class CityScene {
     x: number, y: number, z: number, size: number,
     flickery: boolean, rng: () => number,
   ) {
-    const c = document.createElement('canvas');
-    c.width = 512;
-    c.height = 256;
-    const ctx = c.getContext('2d')!;
+    const { canvas: c, ctx } = create2DCanvas(512, 256);
     ctx.fillStyle = 'rgba(4,4,12,0.9)';
     ctx.fillRect(0, 0, 512, 256);
     ctx.strokeStyle = colorHex;
@@ -405,13 +487,11 @@ export class CityScene {
     for (let row = 0; row < FLOOR_ROWS; row++) {
       for (let col = 0; col < FLOOR_COLS; col++) {
         // 中央のテキストパネル領域は空けておく
-        if (col >= 2 && col <= 6 && row >= 4 && row <= 7) continue;
+        if (col >= 2 && col <= 6 && row >= 2 && row <= 3) continue;
         this.floorTiles.push({
           col,
           row,
           colorIdx: Math.floor(rng() * NEON_PALETTE.length),
-          phase: rng() * Math.PI * 2,
-          speed: 0.5 + rng() * 1.5,
           icon: rng() < 0.3 ? FLOOR_ICONS[Math.floor(rng() * FLOOR_ICONS.length)] : null,
         });
       }
@@ -427,8 +507,22 @@ export class CityScene {
     ctx.fillStyle = '#04040a';
     ctx.fillRect(0, 0, FLOOR_W, FLOOR_H);
 
-    for (const tile of this.floorTiles) {
-      const pulse = 0.55 + 0.45 * Math.sin(t * p.floorPulse * tile.speed + tile.phase);
+    // BPM同期: 床は基本点灯のまま、拍のたびに一部のタイルだけがランダムに選ばれてフラッシュする。
+    // どのタイルが光るかは拍番号から決定論的に決まる（書き出しでも同じ結果）。
+    // beatDepth (Intensity) はフラッシュの強さ、floorPulse は拍レート倍率。
+    const beat = (t * p.bpm / 60) * p.floorPulse;
+    const beatIdx = Math.floor(beat);
+    const frac = beat - beatIdx;
+    const flashEnv = (1 - frac) * (1 - frac); // 拍頭で1 → 拍内で減衰
+    const depth = p.beatDepth;
+    const downbeat = beatIdx % 4 === 0; // 小節頭は少し多めに光る
+    const selectProb = downbeat ? 0.22 : 0.12;
+
+    for (let i = 0; i < this.floorTiles.length; i++) {
+      const tile = this.floorTiles[i];
+      const chosen = hash01(i * 13.37 + beatIdx * 101.7) < selectProb;
+      const flash = chosen ? flashEnv * depth : 0;
+      const pulse = 0.68 + 0.32 * flash; // ベース0.68で常時点灯、選ばれたタイルだけ持ち上がる
       const col = NEON_PALETTE[tile.colorIdx];
       const px = tile.col * FLOOR_CELL;
       const py = tile.row * FLOOR_CELL;
@@ -453,13 +547,14 @@ export class CityScene {
 
     // 中央テキストパネル
     const panelX = 2 * FLOOR_CELL;
-    const panelY = 4 * FLOOR_CELL;
+    const panelY = 2 * FLOOR_CELL;
     const panelW = 5 * FLOOR_CELL;
-    const panelH = 4 * FLOOR_CELL;
+    const panelH = 2 * FLOOR_CELL;
     ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(3,3,10,0.92)';
     ctx.fillRect(panelX + 4, panelY + 4, panelW - 8, panelH - 8);
-    const pulse2 = 0.7 + 0.3 * Math.sin(t * p.floorPulse * 1.3);
+    // CORISパネルは小節頭に1回だけ控えめにフラッシュ
+    const pulse2 = 0.8 + 0.2 * depth * beatHit(beat, 0, 4);
     ctx.globalAlpha = pulse2 * glow;
     ctx.strokeStyle = '#ff4cd2';
     ctx.lineWidth = 4;
@@ -470,8 +565,8 @@ export class CityScene {
     ctx.fillStyle = '#ff4cd2';
     ctx.fillText('CORIS', panelX + panelW / 2, panelY + panelH / 2);
 
-    // 床全体の外周フレーム（二重のネオン枠）
-    const framePulse = 0.75 + 0.25 * Math.sin(t * p.floorPulse * 0.9);
+    // 床全体の外周フレーム: 3拍目に応答（コール&レスポンス）
+    const framePulse = 0.75 + 0.25 * depth * beatHit(beat, 2, 4);
     ctx.globalAlpha = framePulse * glow;
     ctx.strokeStyle = '#4cc9ff';
     ctx.lineWidth = 10;
@@ -487,37 +582,34 @@ export class CityScene {
   // ---- テクスチャ生成 ----
 
   private makeBackdropTexture(): THREE.Texture {
-    const c = document.createElement('canvas');
-    c.width = 1024;
-    c.height = 512;
-    const ctx = c.getContext('2d')!;
-    // 地平線に沈む光のグラデーション
+    const { canvas: c, ctx } = create2DCanvas(1024, 512);
+    // 地平線に沈む光のグラデーション（青いアトモスフィアを基調に、消失点だけ暖色）
     const grad = ctx.createLinearGradient(0, 0, 0, 512);
-    grad.addColorStop(0.0, 'rgba(10,10,40,0)');
-    grad.addColorStop(0.55, 'rgba(90,50,200,0.35)');
-    grad.addColorStop(0.8, 'rgba(255,80,220,0.75)');
-    grad.addColorStop(1.0, 'rgba(160,220,255,0.95)');
+    grad.addColorStop(0.0, 'rgba(8,14,50,0)');
+    grad.addColorStop(0.5, 'rgba(30,55,160,0.4)');
+    grad.addColorStop(0.8, 'rgba(70,110,230,0.7)');
+    grad.addColorStop(1.0, 'rgba(140,190,255,0.95)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1024, 512);
-    // 消失点のコア（中央が最も明るい）
-    const core = ctx.createRadialGradient(512, 500, 10, 512, 500, 340);
-    core.addColorStop(0, 'rgba(255,240,255,0.9)');
-    core.addColorStop(0.3, 'rgba(255,120,230,0.4)');
-    core.addColorStop(1, 'rgba(255,120,230,0)');
+    // 消失点のコア（中央が最も明るい・控えめなピンクのアクセント）
+    const core = ctx.createRadialGradient(512, 500, 10, 512, 500, 300);
+    core.addColorStop(0, 'rgba(255,245,255,0.85)');
+    core.addColorStop(0.35, 'rgba(180,140,255,0.32)');
+    core.addColorStop(1, 'rgba(120,150,255,0)');
     ctx.fillStyle = core;
     ctx.fillRect(0, 0, 1024, 512);
-    // 遠景ビルのシルエット + 窓の点（決定論: 固定シード）
+    // 遠景ビルのシルエット + 窓の点（決定論: 固定シード、青系中心に密集させる）
     const rng = mulberry32(777);
-    for (let i = 0; i < 110; i++) {
-      const bw = 8 + rng() * 24;
-      const bh = 50 + rng() * 280;
+    for (let i = 0; i < 220; i++) {
+      const bw = 6 + rng() * 20;
+      const bh = 40 + rng() * 320;
       const x = rng() * 1024;
-      const hue = [300, 260, 200, 190][Math.floor(rng() * 4)];
+      const hue = [230, 215, 205, 250][Math.floor(rng() * 4)];
       ctx.globalCompositeOperation = 'lighter';
-      ctx.fillStyle = `hsla(${hue}, 90%, ${45 + rng() * 25}%, ${0.08 + rng() * 0.15})`;
+      ctx.fillStyle = `hsla(${hue}, 85%, ${40 + rng() * 25}%, ${0.07 + rng() * 0.13})`;
       ctx.fillRect(x, 512 - bh, bw, bh);
       // 窓の点
-      ctx.fillStyle = `hsla(${hue + 20}, 80%, 80%, 0.5)`;
+      ctx.fillStyle = `hsla(${hue + 15}, 70%, 82%, 0.45)`;
       const nWin = Math.floor(bh / 14);
       for (let wy = 0; wy < nWin; wy++) {
         for (let wx = 0; wx < Math.floor(bw / 7); wx++) {
@@ -540,10 +632,7 @@ export class CityScene {
     rng: () => number, cols: number, floors: number, style: FacadeStyle, storefront: boolean,
   ): THREE.Texture {
     const cw = 24, ch = 32; // 1窓セルのピクセルサイズ
-    const c = document.createElement('canvas');
-    c.width = cols * cw;
-    c.height = floors * ch;
-    const ctx = c.getContext('2d')!;
+    const { canvas: c, ctx } = create2DCanvas(cols * cw, floors * ch);
     ctx.fillStyle = '#030309';
     ctx.fillRect(0, 0, c.width, c.height);
 
@@ -647,7 +736,7 @@ export class CityScene {
     // カメラ: デフォルトは広場に静止（Speed 0）。上げると奥へドリーする。
     // 揺れも含めてカメラ時間 camT = t * speed で動かす → Speed 0 で完全静止
     const camT = t * p.camSpeed;
-    const z = 17 - (camT % (CITY_LENGTH - 60));
+    const z = CAMERA_BASE_Z - (camT % (CITY_LENGTH - 60));
     const swayX = Math.sin(camT * 0.11) * p.camSway;
     this.camera.position.set(swayX, p.camHeight + Math.sin(camT * 0.175) * 0.4, z);
     this.camera.lookAt(swayX * 0.3, p.camHeight + 1.4, z - 40);
@@ -655,12 +744,23 @@ export class CityScene {
     // 遠景はカメラに追従（無限遠のフェイク）。下端を地平線(y=0)に合わせる
     this.backdrop.position.set(0, 75, z - 160);
 
+    // ステージの奥行き（手前端 z=28 を固定して奥へ伸縮）
+    this.floorMesh.scale.y = p.stageDepth / 16;
+    this.floorMesh.position.z = 28 - p.stageDepth / 2;
+
     // ダンスフロアのパルス
     this.drawFloor(t);
 
-    // 看板のフリッカー
-    for (const sign of this.signs) {
-      let level = 0.88 + 0.12 * Math.sin(t * 3 + sign.phase);
+    // 看板: 基本は点灯したまま、拍ごとに一部だけがフラッシュ（+ 従来のフリッカー）
+    const beat = t * p.bpm / 60;
+    const beatIdx = Math.floor(beat);
+    const beatFrac = beat - beatIdx;
+    const signEnv = (1 - beatFrac) * (1 - beatFrac);
+    const bd = p.beatDepth;
+    for (let i = 0; i < this.signs.length; i++) {
+      const sign = this.signs[i];
+      const chosen = hash01(i * 7.77 + beatIdx * 31.3) < 0.2;
+      let level = 0.82 + (chosen ? 0.18 * bd * signEnv : 0);
       if (sign.flickery) {
         const gate = hash01(Math.floor(t * 9) + sign.phase);
         if (gate < 0.14) level *= 0.15; // ときどき消える
