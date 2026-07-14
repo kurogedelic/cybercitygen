@@ -87,6 +87,30 @@ for (const def of PARAM_DEFS) {
   groupBody(def.group).appendChild(row);
 }
 
+// ---- Floor トグル（フロアメッシュの表示/非表示） ----
+
+const floorGroup = groupBody('Floor');
+const floorToggleRow = document.createElement('div');
+floorToggleRow.className = 'toggle-row';
+const floorToggleLabel = document.createElement('label');
+floorToggleLabel.htmlFor = 'floor-enabled';
+floorToggleLabel.textContent = 'Visible';
+const floorSwitch = document.createElement('span');
+floorSwitch.className = 'switch';
+const floorCheckbox = document.createElement('input');
+floorCheckbox.type = 'checkbox';
+floorCheckbox.id = 'floor-enabled';
+floorCheckbox.checked = true;
+const floorTrack = document.createElement('span');
+floorTrack.className = 'track';
+floorSwitch.append(floorCheckbox, floorTrack);
+floorToggleRow.append(floorToggleLabel, floorSwitch);
+floorGroup.insertBefore(floorToggleRow, floorGroup.firstChild); // 一番上に挿入
+
+floorCheckbox.addEventListener('change', () => {
+  (scene as unknown as { floorMesh: { visible: boolean } }).floorMesh.visible = floorCheckbox.checked;
+});
+
 // ---- Export 用フェーダー（動画設定はシーンparamsと別管理） ----
 
 const exportSettings = { duration: 5, bitrate: 20 };
