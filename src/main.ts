@@ -1,6 +1,7 @@
 import { CityScene } from './scene';
 import { exportMp4, exportMp4InWorker } from './exporter';
 import { loadSceneFonts } from './fonts';
+import { loadWindowMask } from './windowMask';
 import { DEFAULT_PARAMS, PARAM_DEFS, type Params } from './params';
 
 const params: Params = { ...DEFAULT_PARAMS };
@@ -11,8 +12,11 @@ const compWrap = document.getElementById('comp-wrap')!;
 const compInfo = document.getElementById('comp-info')!;
 const status = document.getElementById('status')!;
 
-status.textContent = 'loading fonts';
-await loadSceneFonts();
+status.textContent = 'loading assets';
+// 外部フォントが遅延・失敗しても都市プレビューは止めない。看板用フォントは
+// 到着後に利用されればよく、シーン開始に必須なのはローカルの窓マスクだけ。
+void loadSceneFonts();
+await loadWindowMask();
 status.textContent = 'ready';
 
 const scene = new CityScene(canvas, params);
@@ -100,7 +104,7 @@ floorSwitch.className = 'switch';
 const floorCheckbox = document.createElement('input');
 floorCheckbox.type = 'checkbox';
 floorCheckbox.id = 'floor-enabled';
-floorCheckbox.checked = true;
+floorCheckbox.checked = params.floorVisible;
 const floorTrack = document.createElement('span');
 floorTrack.className = 'track';
 floorSwitch.append(floorCheckbox, floorTrack);
@@ -108,7 +112,31 @@ floorToggleRow.append(floorToggleLabel, floorSwitch);
 floorGroup.insertBefore(floorToggleRow, floorGroup.firstChild); // 一番上に挿入
 
 floorCheckbox.addEventListener('change', () => {
-  (scene as unknown as { floorMesh: { visible: boolean } }).floorMesh.visible = floorCheckbox.checked;
+  params.floorVisible = floorCheckbox.checked;
+});
+
+// ---- Signs トグル（文字ネオン看板の表示/非表示） ----
+
+const cityGroup = groupBody('City');
+const signsToggleRow = document.createElement('div');
+signsToggleRow.className = 'toggle-row';
+const signsToggleLabel = document.createElement('label');
+signsToggleLabel.htmlFor = 'signs-enabled';
+signsToggleLabel.textContent = 'Signs';
+const signsSwitch = document.createElement('span');
+signsSwitch.className = 'switch';
+const signsCheckbox = document.createElement('input');
+signsCheckbox.type = 'checkbox';
+signsCheckbox.id = 'signs-enabled';
+signsCheckbox.checked = params.signsVisible;
+const signsTrack = document.createElement('span');
+signsTrack.className = 'track';
+signsSwitch.append(signsCheckbox, signsTrack);
+signsToggleRow.append(signsToggleLabel, signsSwitch);
+cityGroup.insertBefore(signsToggleRow, cityGroup.firstChild);
+
+signsCheckbox.addEventListener('change', () => {
+  params.signsVisible = signsCheckbox.checked;
 });
 
 // ---- Export 用フェーダー（動画設定はシーンparamsと別管理） ----
