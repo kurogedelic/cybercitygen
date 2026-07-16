@@ -12,14 +12,20 @@ const compWrap = document.getElementById('comp-wrap')!;
 const compInfo = document.getElementById('comp-info')!;
 const status = document.getElementById('status')!;
 
+const loader = document.getElementById('loader')!;
+const loaderMsg = document.getElementById('loader-msg')!;
+
 status.textContent = 'loading assets';
+loaderMsg.textContent = 'loading assets…';
 // 外部フォントが遅延・失敗しても都市プレビューは止めない。看板用フォントは
 // 到着後に利用されればよく、シーン開始に必須なのはローカルの窓マスクだけ。
 void loadSceneFonts();
 await loadWindowMask();
-status.textContent = 'ready';
 
+loaderMsg.textContent = 'building city…';
+await new Promise((r) => setTimeout(r, 20)); // メッセージを描画してから重い生成に入る
 const scene = new CityScene(canvas, params);
+status.textContent = 'ready';
 
 // ---- パラメータフェーダーの自動生成 ----
 
@@ -230,11 +236,18 @@ fitPreview();
 // ---- プレビューループ（エクスポート中は止める） ----
 
 const startTime = performance.now();
+let firstFrame = true;
 function tick() {
   requestAnimationFrame(tick);
   if (mainThreadExport) return; // Worker書き出し中はプレビューを動かし続ける
   scene.update((performance.now() - startTime) / 1000);
   scene.render();
+  if (firstFrame) {
+    firstFrame = false;
+    // 最初のフレームが出たらローディング画面をフェードアウト
+    loader.classList.add('done');
+    setTimeout(() => loader.remove(), 600);
+  }
 }
 tick();
 
